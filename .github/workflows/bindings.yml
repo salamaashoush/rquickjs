@@ -130,6 +130,14 @@ jobs:
           pattern: bindings-*
           path: sys/src/bindings
           merge-multiple: true
+      - name: Copy bindings for targets without a matrix entry
+        # Same layouts as the target they are copied from; see
+        # scripts/gen-bindings.sh. Without this the copies keep the
+        # declarations of whichever QuickJS they were first made from.
+        run: |
+          cp sys/src/bindings/armv7-unknown-linux-gnueabihf.rs sys/src/bindings/armv7-unknown-linux-gnueabi.rs
+          cp sys/src/bindings/riscv64gc-unknown-linux-gnu.rs sys/src/bindings/riscv64a23-unknown-linux-gnu.rs
+          cp sys/src/bindings/wasm32-wasip1.rs sys/src/bindings/wasm32-unknown-unknown.rs
       - name: Create pull request
         uses: peter-evans/create-pull-request@v8
         with:

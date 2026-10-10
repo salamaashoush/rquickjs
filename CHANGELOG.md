@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed `Ctx::eval` and other related methods returning a `String contained internal null bytes` error when JS source contains null bytes
 - Fixed `#[rquickjs::methods]` failing to compile a setter with no matching getter
+- Fixed `Promise::result`, and so awaiting an already-rejected promise, leaving the rejection unhandled to a promise rejection tracker
+- Fixed the `armv7-unknown-linux-gnueabi` and `riscv64a23-unknown-linux-gnu` bindings missing `JS_PromiseMarkAsHandled` and `JS_PromiseThen`
 
 ### Security
 

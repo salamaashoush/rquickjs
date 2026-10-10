@@ -108,7 +108,8 @@ impl<'js> Promise<'js> {
     ///
     /// Returns None if the promise has not yet been completed, Ok if the promise was resolved, and
     /// [`Error::Exception`] if the promise rejected with the rejected value as the thrown
-    /// value retrievable via [`Ctx::catch`].
+    /// value retrievable via [`Ctx::catch`]. A rejection read here is marked handled, so a
+    /// promise rejection tracker is told it was handled.
     pub fn result<T: FromJs<'js>>(&self) -> Option<Result<T>> {
         match self.state() {
             PromiseState::Pending => None,
@@ -119,6 +120,10 @@ impl<'js> Promise<'js> {
             }
             PromiseState::Rejected => {
                 unsafe {
+                    // The rejection is handed to the caller, which handles it, the
+                    // same as attaching a handler would. Without this a host
+                    // promise rejection tracker reports it as unhandled.
+                    qjs::JS_PromiseMarkAsHandled(self.ctx().as_ptr(), self.as_js_value());
                     let v = qjs::JS_PromiseResult(self.ctx().as_ptr(), self.as_js_value());
                     qjs::JS_Throw(self.ctx().as_ptr(), v);
                 };
@@ -543,6 +548,55 @@ mod test {
 
             assert!(DID_EXECUTE.load(Ordering::SeqCst));
         })
+    }
+
+    #[test]
+    fn reading_a_rejection_marks_it_handled() {
+        let rt = Runtime::new().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let tracker_seen = seen.clone();
+        rt.set_host_promise_rejection_tracker(Some(Box::new(move |_, _, _, handled| {
+            tracker_seen.lock().unwrap().push(handled);
+        })));
+        let ctx = Context::full(&rt).unwrap();
+
+        ctx.with(|ctx| {
+            let promise: Promise = ctx.eval("Promise.reject(new Error('read'))").unwrap();
+            assert_eq!(*seen.lock().unwrap(), [false]);
+
+            assert!(promise.result::<()>().unwrap().is_err());
+            let _ = ctx.catch();
+            assert_eq!(*seen.lock().unwrap(), [false, true]);
+
+            // Read again: already handled, so the tracker hears nothing more.
+            assert!(promise.result::<()>().unwrap().is_err());
+            let _ = ctx.catch();
+            assert_eq!(*seen.lock().unwrap(), [false, true]);
+        })
+    }
+
+    #[cfg(feature = "futures")]
+    #[tokio::test]
+    async fn awaiting_a_settled_rejection_marks_it_handled() {
+        let rt = AsyncRuntime::new().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let tracker_seen = seen.clone();
+        rt.set_host_promise_rejection_tracker(Some(Box::new(move |_, _, _, handled| {
+            tracker_seen.lock().unwrap().push(handled);
+        })))
+        .await;
+        let ctx = AsyncContext::full(&rt).await.unwrap();
+
+        ctx.async_with(async |ctx| {
+            let function: Function = ctx
+                .eval("(async () => { throw new Error('before any await') })")
+                .unwrap();
+            let promise: Promise = function.call(()).unwrap();
+            assert!(promise.into_future::<()>().await.is_err());
+            let _ = ctx.catch();
+        })
+        .await;
+        assert_eq!(*seen.lock().unwrap(), [false, true]);
     }
 
     #[cfg(feature = "futures")]
